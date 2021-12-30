@@ -131,7 +131,6 @@ class DPLL:
         self.rule3()
         rule1_state = []
         while not self.isSAT():
-            # 二叉回溯 TODO: 回溯规则1的公式与原子公式的状态!!!
             if self.isAssigned():
                 # stack traceback
                 while self.branches:
