@@ -17,6 +17,7 @@ class Formula(Node):
         self.forms = None
         self.length = 1
         self.visited = None 
+        self.true_atoms = 0
 
     def __or__(self, f: Formula):
         if self.nt == NodeType.LeafNode and f.nt == NodeType.LeafNode:
@@ -52,8 +53,9 @@ class Formula(Node):
         return form
 
     def __len__(self):
-        if self.value: return 0
-        else: return self.length
+        if self.value: 
+            return 0
+        else: return self.length 
 
     def __getitem__(self, index):
         if index != 0:
@@ -71,12 +73,20 @@ class Formula(Node):
             self.sid = f"({self.sid})"
         return self.sid
 
-    def fuzzy(self):
+    def fuzzy(self, invert: bool = False):
+        """将该节点状态设置为FUZZY，在进一步的compute()中则会更新"""
         if self.nt == NodeType.LeafNode:
+            if self.value:
+                for form in Formula.getFormulas(self):
+                    form.true_atoms -= 1
+                    if not form.true_atoms: form.sat(False)
             self.update(False)
         self.value = None
+        if not invert and self.invert is not None:
+            self.invert.fuzzy(True)
 
     def sat(self, sat: bool = True): 
+        """将该节点状态设置SAT或UNSAT"""
         if not self.value and sat: # not sat -> sat
             self.value = sat
             return True
@@ -98,19 +108,26 @@ class Formula(Node):
             self.value = None
         self.assigned = assigned
 
-    def assign(self, value: int): 
+    def assign(self, value: int, invert: bool = False): 
+        """为节点指派一个值"""
         if self.nt != NodeType.LeafNode:
             raise RuntimeError('Failed to assign value to non-leaf node.')
-        if self.invert is not None:
-            inv = self.invert
-            inv.update()
-            inv.value = value == 0
-        if self.value:
-            [form.sat() for form in Formula.getFormulas(self)]
-        self.update()
+        if value and not self.value:
+            for form in Formula.getFormulas(self):
+                form.sat() 
+                form.true_atoms += 1
+        elif not value and self.value:
+            for form in Formula.getFormulas(self):
+                form.true_atoms -= 1
+                if not form.true_atoms:
+                    form.sat(False)
         self.value = value != 0
+        self.update()
+        if not invert and self.invert is not None:
+            self.invert.assign(not value, True)
     
     def isSatisfied(self): 
+        """是否SAT"""
         if self.value is not None:
             return self.value
         else:
@@ -119,7 +136,8 @@ class Formula(Node):
                 return True
             else: return False
     
-    def isAssigned(self): 
+    def isAssigned(self):
+        """是否已经指派过值"""
         return self.assigned
 
     def compute(self):
@@ -136,6 +154,7 @@ class Formula(Node):
 
     @staticmethod
     def getFormulas(formula: Formula):
+        """利用原子公式获取公式"""
         def inner(formula: Formula):
             if not formula.next_nodes: 
                 # ignore atom
@@ -152,6 +171,10 @@ class Formula(Node):
 
     @staticmethod
     def isValidity(formula):
+        """
+        用于判断某一公式是否未永真式，利用visited属性当前指向遍历的公式ID，
+        这样只需要遍历一遍即可判断是否A与~A均出现
+        """
         for item in formula.prev_nodes:
             if not item.isAssigned() and item.invert is not None and item.invert.visited == formula.id:
                 return True

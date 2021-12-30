@@ -1,9 +1,11 @@
 import time
 from typing import List
+from cg import NodeType
 from formula import Formula
 import os
 from pathlib import Path
 import sys
+from function import op_or
 
 sys.setrecursionlimit(3000)
 
@@ -39,16 +41,18 @@ class CNFParser:
             elif lines[id].startswith("p"):
                 infos = lines[id].split(" ")
                 vars = [Formula() for i in range(int(infos[2]))]
-                # creating inverted formula
-                # [~var for var in vars]
-                print(f"\nBool Variable Number : {infos[2]}, Clause Number : {infos[3]}")
+                print(f"Current File : {file}\nBool Variable Number : {infos[2]}, Clause Number : {infos[3]}")
             else:
+                clause = Formula(NodeType.BranchNode, op=op_or)
                 vars_in_int = map(lambda s: int(s), lines[id].split(" "))
                 for id, vi in enumerate(vars_in_int):
                     if vi == 0: break
-                    if id == 0: clause = vars[vi-1] if vi > 0 else ~vars[-vi-1]
+                    if id == 0: 
+                        v = vars[vi-1] if vi > 0 else ~vars[-vi-1]
+                        clause.prev_nodes.append(v)
+                        v.next_nodes.append(clause)
                     else: clause |= vars[vi-1] if vi > 0 else ~vars[-vi-1]
-                # graph_folding(clause)
+                    clause |= vars[vi-1] if vi > 0 else ~vars[-vi-1]
                 clauses.append(clause)
         return clauses, vars
 
@@ -71,11 +75,12 @@ class DPLL:
         single_atoms = []
         single_forms = []
         for f in self.forms:
+            # len 被重载为返回当前仍未赋值的变元数，如果其已经SAT则返回0
             if len(f) == 1:
                 used = True
                 single_atoms.append(f[0])
                 for formula in Formula.getFormulas(f[0]):
-                    if formula.sat():
+                    if not formula.isSatisfied():
                         single_forms.append(formula)
                 f[0].assign(1)
         return used, single_atoms, single_forms
@@ -84,11 +89,14 @@ class DPLL:
         """纯文字规则"""
         used = False
         for var in self.vars:
+            # getFormulas用于获取关联的公式集合
             forms = Formula.getFormulas(var)
+            # ~A未出现
             if var.invert is None:
                 used = True
                 var.assign(1)
                 [formula.sat() for formula in forms]
+            # 包含~A，且当前A不在任何公式当中，即仅出现~A 
             elif not forms:
                 used = True
                 (~var).assign(1)
@@ -110,6 +118,7 @@ class DPLL:
         for var in self.vars:
             if not var.isAssigned():
                 var.assign(0)
+                # 用于回溯
                 self.branches.append(var)
                 return True
         return False
@@ -131,15 +140,16 @@ class DPLL:
         self.rule3()
         rule1_state = []
         while not self.isSAT():
+            
             if self.isAssigned():
                 # stack traceback
                 while self.branches:
                     branch = self.branches[-1]
                     if branch.value == 1:
-                        branch.fuzzy()
                         # 还原rule1状态
                         state = rule1_state[-1]
-                        for single_atom in state[0]: 
+                        branch.fuzzy()
+                        for single_atom in state[0]:
                             single_atom.fuzzy()
                         for single_form in state[1]:
                             single_form.fuzzy()
@@ -147,39 +157,54 @@ class DPLL:
                         self.branches.pop()
                     else: 
                         branch.assign(1)
+                        state = rule1_state[-1]
+                        for single_atom in state[0]:
+                            single_atom.fuzzy()
+                        for single_form in state[1]:
+                            single_form.fuzzy()
+                        rule1_state.pop()
+                        # 添加回溯0的状态
+                        temp_atoms = []
+                        temp_forms = []
+                        while True: 
+                            ret, temp_A, temp_F = self.rule1()
+                            if not ret: break
+                            temp_atoms += temp_A
+                            temp_forms += temp_F
+                        rule1_state.append((temp_atoms, temp_forms))
                         break
                 if not self.branches:
                     return False
             # normal rule
-            self.rule4()
-            temp_atoms = []
-            temp_forms = []
-            while True: 
-                ret, temp_A, temp_F = self.rule1()
-                if not ret: break
-                temp_atoms += temp_A
-                temp_forms += temp_F
-            rule1_state.append((temp_atoms, temp_forms))
+            if self.rule4():
+                temp_atoms = []
+                temp_forms = []
+                while True: 
+                    ret, temp_A, temp_F = self.rule1()
+                    if not ret: break
+                    temp_atoms += temp_A
+                    temp_forms += temp_F
+                rule1_state.append((temp_atoms, temp_forms))
         return True
 
   
 if __name__ == "__main__":
-    cnfs = CNFParser("./cnfs")
+    cnfs = CNFParser("./randn_cnfs")
     preprocess = []
     solves = []
     for i in range(len(cnfs)):
         s = time.time()
+        print('-'*25)
         forms, vars = cnfs[i]
         print(f"Preprocess Time : {1e3*(time.time()-s):.4f} ms")
         solver = DPLL(forms, vars)
         s = time.time()
-        print(f'----{i}----')
+        
         print("SAT result :",solver.solve())
-        # solves.append(1e3*(time.time()-s))
         print(f"solved in {1e3*(time.time()-s):.4f}ms")
         ret = compute_result_on_cnf(forms)
         print("compute result :", ret)
-        if ret:
-            print("vars assign : ")
-            for var in vars: 
-                print(f"{var} - {'Any' if var.value is None else var.value}\t", end='')
+        # if ret:
+        #     print("vars assign : ")
+        #     for var in vars: 
+        #         print(f"{var} - {'Any' if var.value is None else var.value}\t", end='')
